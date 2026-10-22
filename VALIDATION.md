@@ -67,6 +67,19 @@ Result: exit 0. Help text prints the command list.
 
 Result: `superweb 1.0.0`, exit 0.
 
+### Packaging and install
+
+```
+npm pack
+npm install -g --prefix <temp-prefix> superweb-1.0.0.tgz
+<temp-prefix>/bin/superweb --version   # run from /tmp
+```
+
+Result: tarball built with 17 files (42.6 kB packed, 125.0 kB unpacked),
+installed globally into a temporary prefix, and printed `superweb 1.0.0` when
+run outside the repository. This verifies that the executable, the `tsx`
+runtime dependency, `SKILL.md`, and the reference docs are all packaged.
+
 ### End-to-end CLI smoke
 
 Executed with the packaged executable (`bin/superweb.mjs`) in a fresh temporary
@@ -131,8 +144,9 @@ Fixtures: `test/fixtures/pages/good.html` (responsive, no external assets) and
   and no Node-26-only API is used intentionally, but a Node 22 CI run is not
   recorded here.
 - Linux and Windows Chrome discovery: only macOS paths were exercised.
-- Global install (`npm install -g .` / `npm link`): the packaged executable was
-  run directly; global linking was not executed.
+- Global install: a temporary-prefix global install from the packed tarball was
+  executed and succeeded (`superweb --version` from `/tmp`); installing into the
+  user's real global prefix was not performed.
 - Safari, Firefox, iOS Safari, and Android Chrome: out of scope; only local
   Chrome desktop emulation at three viewport widths.
 - Visual quality, contrast/WCAG, animation smoothness, and reduced-motion
