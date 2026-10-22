@@ -76,6 +76,35 @@ test('start keeps a thin brief at the brief stage and can override the route', a
   assert.equal(json(await cli(thin, ['status', '--json'])).stage, 'brief');
 });
 
+
+test('start adopts an existing brief for a creation task without overwriting it', async () => {
+  const dir = await newDir();
+  const brief = '# 需求：独立书店\n\n为一间独立书店做一个介绍页，包含本周活动、营业时间、到店路线和联系方式；受众是附近居民，暂时没有照片和 logo。\n';
+  await writeFile(join(dir, '需求.md'), brief, 'utf8');
+
+  const started = await cli(dir, ['start', '--name', '独立书店', '--adopt-brief', '--json']);
+  assert.equal(started.code, 0, started.stderr);
+  const summary = json(started);
+  assert.equal(summary.route, 'page');
+  assert.equal(summary.stage, 'direction');
+  assert.equal((summary.directions as Array<{ id: string }>).length, 3);
+  assert.equal(await readFile(join(dir, '需求.md'), 'utf8'), brief);
+
+  const again = await cli(dir, ['start', '--name', 'again', '--adopt-brief']);
+  assert.equal(again.code, 3);
+  assert.match(again.stderr, /superweb\.json/);
+});
+
+test('start refuses an existing brief without --adopt-brief', async () => {
+  const dir = await newDir();
+  await writeFile(join(dir, '需求.md'), '# 需求\n\n已经有人写好的需求。\n', 'utf8');
+
+  const started = await cli(dir, ['start', '--name', '书店']);
+  assert.equal(started.code, 3);
+  assert.match(started.stderr, /不会覆盖需求文件/);
+  assert.match(await readFile(join(dir, '需求.md'), 'utf8'), /已经有人写好的需求/);
+});
+
 test('directions refuses a thin brief, then extracts the same three ids for the same seed', async () => {
   const dir = await newDir();
   await cli(dir, ['start', '--name', '演示']);

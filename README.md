@@ -64,6 +64,9 @@ there is no OpenChamber integration in v1.
 superweb start --dir ./my-site --name "书店" \
   --brief "为一间独立书店做一个介绍页，包含本周活动、营业时间和到店路线。"
 
+# When 需求.md already exists (for example from the OpenChamber wizard):
+superweb start --dir ./my-site --name "书店" --adopt-brief
+
 # show 设计方向.md to the user, wait for the choice
 superweb decide --dir ./my-site --gate direction --choice editorial-swiss
 
@@ -98,7 +101,7 @@ browser checks, and delivery layout.
 
 ```
 superweb start      --dir <dir> [--name <name>] [--route page|app]
-                    [--brief <text> | --brief-file <path>]
+                    [--brief <text> | --brief-file <path> | --adopt-brief]
 superweb directions --dir <dir> [--seed <seed>]
 superweb decide     --dir <dir> --gate direction|sample|acceptance
                     --choice <id|accept|rework>

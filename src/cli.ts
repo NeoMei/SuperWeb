@@ -59,7 +59,7 @@ class CliError extends Error {
   }
 }
 
-const BOOLEAN_FLAGS = new Set(['json', 'help', 'version', 'acknowledge-issues']);
+const BOOLEAN_FLAGS = new Set(['json', 'help', 'version', 'acknowledge-issues', 'adopt-brief']);
 const GLOBAL_FLAGS = new Set(['dir', 'json', 'help']);
 
 function parseArgv(argv: string[]): { command?: string; flags: Flags; positionals: string[] } {
@@ -104,7 +104,7 @@ function parseArgv(argv: string[]): { command?: string; flags: Flags; positional
 function allowedFlags(command: string): Set<string> {
   switch (command) {
     case 'start':
-      return new Set([...GLOBAL_FLAGS, 'name', 'route', 'brief', 'brief-file']);
+      return new Set([...GLOBAL_FLAGS, 'name', 'route', 'brief', 'brief-file', 'adopt-brief']);
     case 'directions':
       return new Set([...GLOBAL_FLAGS, 'seed']);
     case 'decide':
@@ -422,12 +422,22 @@ export async function run(argv: string[], io: CliIO = {}): Promise<number> {
         if (await pathExists(statePath(taskDir))) {
           throw new CliError(`${taskDir} already contains ${STATE_FILE}；不会覆盖已有任务。`, 3, '换一个 --dir，或先备份并删除旧任务。');
         }
-        if (await pathExists(join(taskDir, BRIEF_FILE))) {
-          throw new CliError(`${join(taskDir, BRIEF_FILE)} already exists；不会覆盖需求文件。`, 3);
+        const briefPath = join(taskDir, BRIEF_FILE);
+        const hasExistingBrief = await pathExists(briefPath);
+        if (hasExistingBrief && (briefInline || briefFile)) {
+          throw new CliError(`${briefPath} already exists；不会覆盖需求文件。`, 3, '已有需求时加 --adopt-brief 直接接管，或换一个 --dir。');
+        }
+        if (hasExistingBrief && !flags['adopt-brief']) {
+          throw new CliError(`${briefPath} already exists；不会覆盖需求文件。`, 3, '已有需求时加 --adopt-brief 直接接管，或换一个 --dir。');
+        }
+        if (!hasExistingBrief && flags['adopt-brief']) {
+          throw new CliError('--adopt-brief 需要目录里已有 需求.md。', 2);
         }
 
         let briefText: string;
-        if (briefFile) {
+        if (hasExistingBrief) {
+          briefText = await readFile(briefPath, 'utf8');
+        } else if (briefFile) {
           briefText = await readFile(resolve(cwd, briefFile), 'utf8').catch(() => {
             throw new CliError(`读不到 --brief-file：${briefFile}。`, 3);
           });
@@ -443,13 +453,15 @@ export async function run(argv: string[], io: CliIO = {}): Promise<number> {
 
         const route: Route = (routeFlag as Route | undefined) ?? detectRoute(briefText === BRIEF_TEMPLATE ? name : briefText);
         const state = createState({ taskId: newTaskId(name), route });
-        const briefContent = briefInline || briefFile ? `# 需求：${name}\n\n${briefText.trim()}\n` : briefText;
-        await writeFile(join(taskDir, BRIEF_FILE), briefContent, 'utf8');
+        if (!hasExistingBrief) {
+          const briefContent = briefInline || briefFile ? `# 需求：${name}\n\n${briefText.trim()}\n` : briefText;
+          await writeFile(briefPath, briefContent, 'utf8');
+        }
         await writeState(taskDir, state);
 
         let nextState = state;
         let directions: Direction[] | undefined;
-        if ((briefInline || briefFile) && assessBrief(briefText).ok) {
+        if ((briefInline || briefFile || hasExistingBrief) && assessBrief(briefText).ok) {
           const generated = await generateDirections(taskDir, state, state.taskId);
           nextState = generated.state;
           directions = generated.directions;
@@ -767,6 +779,7 @@ function helpText(): string {
       --route page|app      覆盖自动路线判断
       --brief <文本>        需求正文
       --brief-file <路径>   从文件读取需求
+      --adopt-brief         接管已有 需求.md，不覆盖
   directions                重新抽 3 个方向 + 内容结构（通常不需要手动运行）
       --seed <字符串>       可复现的抽取种子，默认 taskId
   decide                    提交决定（校验阶段；revision 默认当前值）

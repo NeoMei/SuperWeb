@@ -44,9 +44,16 @@ superweb start --dir <task-dir> --name "<name>" --brief "<brief>"
 ```
 
 If the brief is substantial, `start` writes `需求.md` **and extracts the three
-directions automatically**. If the brief is too thin, it stays at `brief`:
-fill `需求.md` with what the user actually said, then run
-`superweb directions --dir <task-dir>`.
+directions automatically**. If the task directory already has a `需求.md` from
+the creation wizard, add `--adopt-brief` and omit `--brief`; it adopts the
+existing file instead of overwriting it:
+
+```bash
+superweb start --dir <task-dir> --name "<name>" --adopt-brief
+```
+
+If the brief is too thin, it stays at `brief`: fill `需求.md` with what the user
+actually said, then run `superweb directions --dir <task-dir>`.
 
 Resume with `superweb continue --dir <task-dir> --json`.
 
