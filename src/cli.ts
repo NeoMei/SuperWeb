@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
 import { basename, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
@@ -10,6 +11,7 @@ import {
   parseOfferedDirectionIds,
   pickDirections,
   renderDirectionsDoc,
+  type Direction,
 } from './directions.js';
 import { DeliveryError, deliverTask } from './delivery.js';
 import { inspectTask } from './inspect.js';
@@ -34,7 +36,7 @@ import {
   writeState,
 } from './state.js';
 
-const VERSION = '1.0.0';
+const VERSION = '1.1.0';
 
 type FlagValue = string | boolean;
 type Flags = Record<string, FlagValue>;
@@ -182,7 +184,7 @@ function nextActions(state: SuperwebState, taskDir: string, cwd: string): NextAc
       return [
         {
           action: '确认方向和内容结构',
-          command: `${base} decide --gate direction --choice <方向ID> --revision ${state.stageRevision} --decision-id <新ID>`,
+          command: `${base} decide --gate direction --choice <方向ID>`,
           note: `三个方向见 ${directionsRelative}；先给用户看，得到明确选择后再提交。`,
         },
         {
@@ -201,7 +203,7 @@ function nextActions(state: SuperwebState, taskDir: string, cwd: string): NextAc
         },
         {
           action: '确认样页',
-          command: `${base} decide --gate sample --choice accept --revision ${state.stageRevision} --decision-id <新ID>`,
+          command: `${base} decide --gate sample --choice accept`,
           note: '让用户先看 预览/v0.html；必要时用浏览器打开或截图给用户。',
         },
       ];
@@ -228,14 +230,14 @@ function nextActions(state: SuperwebState, taskDir: string, cwd: string): NextAc
         },
         {
           action: '接受并交付',
-          command: `${base} decide --gate acceptance --choice accept --revision ${state.stageRevision} --decision-id <新ID>`,
+          command: `${base} decide --gate acceptance --choice accept`,
           note: state.acceptance.passed
-            ? '验收通过后提交，再运行 deliver。'
+            ? '提交后会自动生成交付目录；如需重试，再运行 deliver。'
             : '验收存在问题：修复后重新 inspect；如果用户明确接受问题，加 --acknowledge-issues。',
         },
         {
           action: '返工',
-          command: `${base} decide --gate acceptance --choice rework --revision ${state.stageRevision} --decision-id <新ID> --target full`,
+          command: `${base} decide --gate acceptance --choice rework --target full`,
           note: '只改有问题的区块；--target sample 表示回到样页。旧确认会失效。',
         },
       ];
@@ -250,7 +252,7 @@ function nextActions(state: SuperwebState, taskDir: string, cwd: string): NextAc
             },
             {
               action: '交付后返工',
-              command: `${base} decide --gate acceptance --choice rework --revision ${state.stageRevision} --decision-id <新ID>`,
+              command: `${base} decide --gate acceptance --choice rework`,
               note: '新开 revision；旧交付保留，下一次 deliver 会归档为 交付-vN。',
             },
           ]
@@ -262,7 +264,7 @@ function nextActions(state: SuperwebState, taskDir: string, cwd: string): NextAc
             },
             {
               action: '交付后返工',
-              command: `${base} decide --gate acceptance --choice rework --revision ${state.stageRevision} --decision-id <新ID>`,
+              command: `${base} decide --gate acceptance --choice rework`,
               note: '新开 revision；旧交付保留，下一次 deliver 会归档为 交付-vN。',
             },
           ];
@@ -307,15 +309,58 @@ function renderContinueHuman(state: SuperwebState, taskDir: string, cwd: string)
   return renderStatusHuman(state, taskDir, cwd);
 }
 
-function renderStartHuman(state: SuperwebState, taskDir: string, cwd: string): string {
-  return [
+function renderStartHuman(state: SuperwebState, taskDir: string, cwd: string, directions?: Direction[]): string {
+  const lines = [
     `已创建 SuperWeb 任务：${state.taskId}`,
     `目录：${taskDir}`,
-    `路线：${state.route}（${state.route === 'page' ? '浏览型页面' : '工作型界面'}）　阶段：brief（需求）　revision：${state.stageRevision}`,
-    '',
-    '下一步：',
-    printNext(nextActions(state, taskDir, cwd)),
-  ].join('\n');
+    `路线：${state.route}（${state.route === 'page' ? '浏览型页面' : '工作型界面'}）　阶段：${state.stage}（${STAGE_LABELS[state.stage]}）　revision：${state.stageRevision}`,
+  ];
+  if (directions && directions.length > 0) {
+    lines.push('', '已抽取 3 个方向：');
+    for (const direction of directions) {
+      lines.push(`- ${direction.id} — ${direction.nameZh}：${direction.concept}`);
+    }
+    lines.push(`方向与内容结构：${join(relativeCommandPath(taskDir, cwd), DIRECTIONS_FILE)}`);
+  }
+  lines.push('', '下一步：', printNext(nextActions(state, taskDir, cwd)));
+  return lines.join('\n');
+}
+
+function autoDecisionId(gate: string, choice: string): string {
+  const safe = choice.replace(/[^a-zA-Z0-9-]+/g, '-').slice(0, 24) || 'choice';
+  return `d-${gate}-${safe}-${randomBytes(3).toString('hex')}`;
+}
+
+async function generateDirections(
+  taskDir: string,
+  state: SuperwebState,
+  seed: string,
+): Promise<{ state: SuperwebState; directions: Direction[] }> {
+  if (state.stage !== 'brief' && state.stage !== 'direction') {
+    throw new CliError(`当前阶段是 ${state.stage}，方向已确认，不能重新抽取。`, 3, '需要改方向时先走验收返工流程。');
+  }
+  const briefPath = join(taskDir, state.briefPath);
+  const brief = await readFile(briefPath, 'utf8').catch(() => {
+    throw new CliError(`找不到需求文件：${briefPath}。`, 3);
+  });
+  const assessment = assessBrief(brief);
+  if (!assessment.ok) {
+    throw new CliError(`需求还不够，不能给出方向：${assessment.reason}`, 3, `先补全 ${join(taskDir, BRIEF_FILE)}。`);
+  }
+
+  const directions = pickDirections(state.route, seed, 3);
+  const doc = renderDirectionsDoc({
+    taskId: state.taskId,
+    route: state.route,
+    seed,
+    revision: state.stageRevision + 1,
+    directions,
+    blueprint: state.route === 'page' ? PAGE_BLUEPRINT : APP_BLUEPRINT,
+  });
+  await writeFile(join(taskDir, DIRECTIONS_FILE), doc, 'utf8');
+  const nextState = markDirectionsReady(state);
+  await writeState(taskDir, nextState);
+  return { state: nextState, directions };
 }
 
 const BRIEF_TEMPLATE = `# 需求
@@ -402,40 +447,37 @@ export async function run(argv: string[], io: CliIO = {}): Promise<number> {
         await writeFile(join(taskDir, BRIEF_FILE), briefContent, 'utf8');
         await writeState(taskDir, state);
 
-        if (json) outputJson(stateSummary(state, taskDir, cwd));
-        else outputHuman(renderStartHuman(state, taskDir, cwd));
+        let nextState = state;
+        let directions: Direction[] | undefined;
+        if ((briefInline || briefFile) && assessBrief(briefText).ok) {
+          const generated = await generateDirections(taskDir, state, state.taskId);
+          nextState = generated.state;
+          directions = generated.directions;
+        }
+
+        if (json) {
+          outputJson({
+            ...stateSummary(nextState, taskDir, cwd),
+            ...(directions
+              ? {
+                  directions: directions.map((direction) => ({ id: direction.id, nameZh: direction.nameZh, nameEn: direction.nameEn })),
+                  directionsPath: DIRECTIONS_FILE,
+                }
+              : {}),
+          });
+        } else {
+          outputHuman(renderStartHuman(nextState, taskDir, cwd, directions));
+        }
         return 0;
       }
 
       case 'directions': {
         const taskDir = resolve(cwd, stringFlag(flags, 'dir') ?? '.');
         const state = await readState(taskDir);
-        if (state.stage !== 'brief' && state.stage !== 'direction') {
-          throw new CliError(`当前阶段是 ${state.stage}，方向已确认，不能重新抽取。`, 3, '需要改方向时先走验收返工流程。');
-        }
-        const briefPath = join(taskDir, state.briefPath);
-        const brief = await readFile(briefPath, 'utf8').catch(() => {
-          throw new CliError(`找不到需求文件：${briefPath}。`, 3);
-        });
-        const assessment = assessBrief(brief);
-        if (!assessment.ok) {
-          throw new CliError(`需求还不够，不能给出方向：${assessment.reason}`, 3, `先补全 ${join(taskDir, BRIEF_FILE)}。`);
-        }
-
         const seed = stringFlag(flags, 'seed') ?? state.taskId;
-        const nextRevision = state.stageRevision + 1;
-        const directions = pickDirections(state.route, seed, 3);
-        const doc = renderDirectionsDoc({
-          taskId: state.taskId,
-          route: state.route,
-          seed,
-          revision: nextRevision,
-          directions,
-          blueprint: state.route === 'page' ? PAGE_BLUEPRINT : APP_BLUEPRINT,
-        });
-        await writeFile(join(taskDir, DIRECTIONS_FILE), doc, 'utf8');
-        const nextState = markDirectionsReady(state);
-        await writeState(taskDir, nextState);
+        const generated = await generateDirections(taskDir, state, seed);
+        const nextState = generated.state;
+        const directions = generated.directions;
 
         const summary = {
           ok: true,
@@ -480,8 +522,8 @@ export async function run(argv: string[], io: CliIO = {}): Promise<number> {
           throw new CliError('--gate 只接受 direction、sample 或 acceptance。', 2);
         }
         const choice = stringFlag(flags, 'choice', true)!;
-        const revision = intFlag(flags, 'revision', true)!;
-        const decisionId = stringFlag(flags, 'decision-id', true)!;
+        const revision = intFlag(flags, 'revision') ?? state.stageRevision;
+        const decisionId = stringFlag(flags, 'decision-id') ?? autoDecisionId(gate, choice);
         const target = stringFlag(flags, 'target');
         if (target && target !== 'full' && target !== 'sample') {
           throw new CliError('--target 只接受 full 或 sample。', 2);
@@ -517,31 +559,58 @@ export async function run(argv: string[], io: CliIO = {}): Promise<number> {
         });
         if (!result.idempotent) await writeState(taskDir, result.state);
 
+        let stateAfter = result.state;
+        let delivery: Record<string, unknown> | undefined;
+        let exitCode = 0;
+        if (!result.idempotent && gate === 'acceptance' && choice === 'accept') {
+          try {
+            const delivered = await deliverTask({ taskDir, state: result.state });
+            stateAfter = {
+              ...result.state,
+              artifacts: { ...result.state.artifacts, delivery: DELIVERY_DIR },
+            };
+            await writeState(taskDir, stateAfter);
+            delivery = { ok: true, ...delivered };
+          } catch (error) {
+            if (!(error instanceof DeliveryError)) throw error;
+            delivery = { ok: false, error: error.message, issues: error.issues };
+            exitCode = 1;
+          }
+        }
+
         const summary = {
-          ok: true,
+          ok: delivery ? delivery.ok === true : true,
           idempotent: result.idempotent,
-          stage: result.state.stage,
-          stageRevision: result.state.stageRevision,
-          selectedDirectionId: result.state.selectedDirectionId,
+          stage: stateAfter.stage,
+          stageRevision: stateAfter.stageRevision,
+          selectedDirectionId: stateAfter.selectedDirectionId,
           decisionId,
-          path: result.state.artifacts.delivery ?? null,
-          next: nextActions(result.state, taskDir, cwd),
+          path: stateAfter.artifacts.delivery ?? null,
+          ...(delivery ? { delivery } : {}),
+          next: nextActions(stateAfter, taskDir, cwd),
         };
         if (json) outputJson(summary);
         else {
-          outputHuman(
-            [
-              result.idempotent
-                ? `决定 ${decisionId} 已提交过，本次幂等返回。`
-                : `已记录决定 ${decisionId}（${gate}/${choice}）。`,
-              `阶段：${result.state.stage}（${STAGE_LABELS[result.state.stage]}）　revision：${result.state.stageRevision}`,
-              '',
-              '下一步：',
-              printNext(nextActions(result.state, taskDir, cwd)),
-            ].join('\n'),
-          );
+          const lines = [
+            result.idempotent
+              ? `决定 ${decisionId} 已提交过，本次幂等返回。`
+              : `已记录决定 ${decisionId}（${gate}/${choice}）。`,
+            `阶段：${stateAfter.stage}（${STAGE_LABELS[stateAfter.stage]}）　revision：${stateAfter.stageRevision}`,
+          ];
+          if (delivery) {
+            if (delivery.ok === true) {
+              lines.push(`已自动交付：${join(relativeCommandPath(taskDir, cwd), DELIVERY_DIR)}`);
+            } else {
+              lines.push(`交付未完成：${String(delivery.error)}`);
+              for (const issue of (delivery.issues as Array<{ file: string; message: string }>) ?? []) {
+                lines.push(`- ${issue.file}: ${issue.message}`);
+              }
+            }
+          }
+          lines.push('', '下一步：', printNext(nextActions(stateAfter, taskDir, cwd)));
+          outputHuman(lines.join('\n'));
         }
-        return 0;
+        return exitCode;
       }
 
       case 'inspect': {
@@ -693,24 +762,24 @@ function helpText(): string {
   --json                    输出机器可读 JSON
 
 命令：
-  start                     创建任务、superweb.json 和 需求.md
+  start                     创建任务、superweb.json 和 需求.md；需求足够时直接抽方向
       --name <名称>         任务名称，默认目录名
       --route page|app      覆盖自动路线判断
       --brief <文本>        需求正文
       --brief-file <路径>   从文件读取需求
-  directions                按需求抽 3 个方向 + 内容结构，写入 设计方向.md
+  directions                重新抽 3 个方向 + 内容结构（通常不需要手动运行）
       --seed <字符串>       可复现的抽取种子，默认 taskId
-  decide                    提交决定（校验阶段和 revision）
+  decide                    提交决定（校验阶段；revision 默认当前值）
       --gate direction|sample|acceptance
       --choice <方向ID|accept|rework>
-      --revision <数字>     当前 stageRevision
-      --decision-id <ID>    新的唯一决定 ID（重复提交相同内容幂等）
+      --revision <数字>     可选；默认使用当前 stageRevision
+      --decision-id <ID>    可选；默认自动生成，显式传入可保证幂等
       --target full|sample  仅验收返工：回到哪个阶段
       --acknowledge-issues  验收未通过时明确接受问题
   inspect                   用本机 Chrome 在桌面/平板/手机三档验收
       --chrome <路径>       指定 Chrome 可执行文件
       --timeout <毫秒>      单页加载超时，默认 15000
-  deliver                   生成自包含的 交付/（旧交付归档为 交付-vN）
+  deliver                   重新生成交付目录（接受验收时会自动交付）
   continue                  查看当前阶段、决定、产物和下一步（只读）
   status                    只读查看状态（不推进阶段）
 

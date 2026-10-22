@@ -1,9 +1,12 @@
 # Delivery
 
 `superweb deliver` runs only at stage `delivered` with an acceptance `accept`
-decision. It validates the preview, builds a temporary copy, archives any
-previous delivery, and only then replaces `交付/`. A failed check leaves both
-the old delivery and the preview untouched.
+decision. Accepting the acceptance gate runs it automatically; the command
+remains for retrying after fixing a refused check.
+
+It validates the preview, builds a temporary copy, archives any previous
+delivery, and only then replaces `交付/`. A failed check leaves both the old
+delivery and the preview untouched.
 
 ## Self-contained rules
 
@@ -56,9 +59,8 @@ copied away.
 Post-delivery rework:
 
 ```bash
-superweb decide --dir <task> --gate acceptance --choice rework \
-  --revision <current> --decision-id <new> --target full
-# edit, re-inspect, re-accept, deliver
+superweb decide --dir <task> --gate acceptance --choice rework --target full
+# edit, re-inspect, re-accept (auto-delivers)
 ```
 
 The new delivery gets `交付/`; the previous one stays as `交付-vN/`.

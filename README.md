@@ -60,31 +60,28 @@ there is no OpenChamber integration in v1.
 ## Quick start
 
 ```bash
+# start + auto-extract three directions (when the brief is substantial)
 superweb start --dir ./my-site --name "书店" \
   --brief "为一间独立书店做一个介绍页，包含本周活动、营业时间和到店路线。"
 
-superweb directions --dir ./my-site
-# read 设计方向.md, show three directions to the user, wait for a choice
-
-superweb decide --dir ./my-site --gate direction \
-  --choice editorial-swiss --revision 2 --decision-id direction-1
+# show 设计方向.md to the user, wait for the choice
+superweb decide --dir ./my-site --gate direction --choice editorial-swiss
 
 # write 预览/v0.html: first viewport + one section
-superweb decide --dir ./my-site --gate sample --choice accept \
-  --revision 3 --decision-id sample-1
+superweb decide --dir ./my-site --gate sample --choice accept
 
 # write 预览/index.html: the full page
 superweb inspect --dir ./my-site
 # show 验收/*.png and 验收/report.json, wait for acceptance
 
-superweb decide --dir ./my-site --gate acceptance --choice accept \
-  --revision 5 --decision-id accept-1
-
-superweb deliver --dir ./my-site
+# acceptance also builds 交付/ automatically
+superweb decide --dir ./my-site --gate acceptance --choice accept
 ```
 
-The exact revisions come from `superweb continue --dir ./my-site --json`; do
-not calculate or reuse them.
+Only three user confirmations: direction, sample, acceptance. `decide`
+defaults `--revision` to the current state and generates a `--decision-id`
+automatically. Pass them explicitly if you need an auditable, idempotent
+decision ID. Use `superweb continue --dir ./my-site --json` to resume.
 
 ## Routes
 
@@ -104,8 +101,8 @@ superweb start      --dir <dir> [--name <name>] [--route page|app]
                     [--brief <text> | --brief-file <path>]
 superweb directions --dir <dir> [--seed <seed>]
 superweb decide     --dir <dir> --gate direction|sample|acceptance
-                    --choice <id|accept|rework> --revision <n>
-                    --decision-id <new-id>
+                    --choice <id|accept|rework>
+                    [--revision <n>] [--decision-id <id>]
                     [--target full|sample] [--acknowledge-issues]
 superweb inspect    --dir <dir> [--chrome <path>] [--timeout <ms>]
 superweb deliver    --dir <dir>
@@ -115,6 +112,11 @@ superweb status     --dir <dir> [--json]
 
 `--dir` defaults to the current directory. `--json` prints one JSON object.
 `status` and `continue` never modify state.
+
+`start` extracts directions automatically when the supplied brief has enough
+content. `decide` uses the current `stageRevision` and a generated decision ID
+when they are omitted; explicit values are still validated. Accepting the
+acceptance gate also runs delivery.
 
 Exit codes:
 
@@ -250,10 +252,11 @@ delivery requires `--acknowledge-issues`; `说明.md` then states
 
 ## Delivery
 
-`deliver` requires a delivered stage and an acceptance decision. It checks that
-every asset reference is relative, local, and exists; remote URLs, absolute
-paths, and missing files are refused. The page, assets, acceptance evidence,
-and `说明.md` are copied into `交付/`.
+`deliver` requires a delivered stage and an acceptance decision; accepting the
+acceptance gate runs it automatically. It checks that every asset reference is
+relative, local, and exists; remote URLs, absolute paths, and missing files are
+refused. The page, assets, acceptance evidence, and `说明.md` are copied into
+`交付/`.
 
 If `交付/` already exists, it is renamed to `交付-v1/`, `交付-v2/`, and so on
 before the new delivery is written. Files the user already took are never

@@ -442,10 +442,10 @@ export function renderDirectionsDoc(options: {
     '选定方向并确认内容结构后运行（替换方向 ID 和 decision ID）：',
     '',
     '```bash',
-    `superweb decide --dir <任务目录> --gate direction --choice <方向ID> --revision ${options.revision} --decision-id <新ID>`,
+    `superweb decide --dir <任务目录> --gate direction --choice <方向ID>`,
     '```',
     '',
-    '确认后 stageRevision 会推进，旧的确认自动失效。需要重新抽取方向时使用新的 seed，并重新确认内容结构。',
+    '`--revision` 自动使用当前 revision；`--decision-id` 会自动生成。需要可审计的幂等确认时，再显式传入这两个参数。确认后 stageRevision 会推进，旧的确认自动失效。需要重新抽取方向时使用新的 seed，并重新确认内容结构。',
     '',
   );
 

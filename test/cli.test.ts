@@ -37,17 +37,19 @@ async function newDir(): Promise<string> {
 const APP_BRIEF =
   '做一个团队管理后台，包含仪表盘、用户列表、设置页和权限控制。需要展示每个成员的当前状态，并支持按部门筛选和批量邀请成员。';
 
-test('start creates a task, detects the app route and never overwrites it', async () => {
+test('start creates a task, detects the app route and immediately extracts directions', async () => {
   const dir = await newDir();
   const started = await cli(dir, ['start', '--name', '团队后台', '--brief', APP_BRIEF, '--json']);
   assert.equal(started.code, 0, started.stderr);
   const summary = json(started);
   assert.equal(summary.route, 'app');
-  assert.equal(summary.stage, 'brief');
-  assert.equal(summary.stageRevision, 1);
+  assert.equal(summary.stage, 'direction');
+  assert.equal(summary.stageRevision, 2);
+  assert.equal((summary.directions as Array<{ id: string }>).length, 3);
 
   assert.match(await readFile(join(dir, '需求.md'), 'utf8'), /团队管理后台/);
   assert.match(await readFile(join(dir, 'superweb.json'), 'utf8'), /"route": "app"/);
+  assert.match(await readFile(join(dir, '设计方向.md'), 'utf8'), /## 内容结构/);
 
   const again = await cli(dir, ['start', '--name', '覆盖', '--brief', APP_BRIEF]);
   assert.equal(again.code, 3);
@@ -55,17 +57,23 @@ test('start creates a task, detects the app route and never overwrites it', asyn
   assert.match(await readFile(join(dir, '需求.md'), 'utf8'), /团队管理后台/);
 });
 
-test('start can override the automatic route and status is read-only', async () => {
+test('start keeps a thin brief at the brief stage and can override the route', async () => {
   const dir = await newDir();
   const started = await cli(dir, ['start', '--route', 'page', '--brief', APP_BRIEF, '--json']);
   assert.equal(started.code, 0, started.stderr);
   assert.equal(json(started).route, 'page');
+  assert.equal(json(started).stage, 'direction');
 
   const before = await readFile(join(dir, 'superweb.json'), 'utf8');
   const status = await cli(dir, ['status', '--json']);
   assert.equal(status.code, 0);
-  assert.equal(json(status).stage, 'brief');
+  assert.equal(json(status).stage, 'direction');
   assert.equal(await readFile(join(dir, 'superweb.json'), 'utf8'), before);
+
+  const thin = await newDir();
+  const thinStart = await cli(thin, ['start', '--name', '演示']);
+  assert.equal(thinStart.code, 0);
+  assert.equal(json(await cli(thin, ['status', '--json'])).stage, 'brief');
 });
 
 test('directions refuses a thin brief, then extracts the same three ids for the same seed', async () => {
@@ -103,10 +111,12 @@ test('directions refuses a thin brief, then extracts the same three ids for the 
 
 test('decide rejects stale revisions, unknown directions and skipped stages', async () => {
   const dir = await newDir();
-  await cli(dir, ['start', '--name', '演示', '--brief', '做一个摄影作品集落地页，展示三个系列、关于页面和联系方式。素材是本地照片，暂时没有 logo。']);
-  const directions = await cli(dir, ['directions', '--seed', 'decide-seed', '--json']);
-  assert.equal(directions.code, 0, directions.stderr);
-  const offered = (json(directions).directions as Array<{ id: string }>).map((direction) => direction.id);
+  const started = await cli(dir, [
+    'start', '--name', '演示', '--brief',
+    '做一个摄影作品集落地页，展示三个系列、关于页面和联系方式。素材是本地照片，暂时没有 logo。', '--json',
+  ]);
+  assert.equal(started.code, 0, started.stderr);
+  const offered = (json(started).directions as Array<{ id: string }>).map((direction) => direction.id);
 
   const stale = await cli(dir, [
     'decide', '--gate', 'direction', '--choice', offered[0]!, '--revision', '1', '--decision-id', 'd-stale',
@@ -126,42 +136,41 @@ test('decide rejects stale revisions, unknown directions and skipped stages', as
   assert.equal(skipped.code, 3);
 });
 
-test('full page lifecycle reaches delivery with browser evidence', {
+test('full page lifecycle requires only three confirmations and auto-delivers', {
   skip: findChrome().available ? false : 'Chrome not installed',
 }, async () => {
   const dir = await newDir();
-  await cli(dir, [
+  const started = await cli(dir, [
     'start', '--name', '书店', '--brief',
-    '为一间独立书店做一个介绍页，包含本周活动、营业时间和到店路线。使用真实文字，暂时没有照片，用明确占位符。',
+    '为一间独立书店做一个介绍页，包含本周活动、营业时间和到店路线。使用真实文字，暂时没有照片，用明确占位符。', '--json',
   ]);
-  const directions = await cli(dir, ['directions', '--seed', 'lifecycle', '--json']);
-  assert.equal(directions.code, 0, directions.stderr);
-  const directionId = (json(directions).directions as Array<{ id: string }>)[0]!.id;
+  assert.equal(started.code, 0, started.stderr);
+  assert.equal(json(started).stage, 'direction');
+  const directionId = (json(started).directions as Array<{ id: string }>)[0]!.id;
 
-  const accepted = await cli(dir, [
-    'decide', '--gate', 'direction', '--choice', directionId, '--revision', '2', '--decision-id', 'd-direction',
-  ]);
+  const accepted = await cli(dir, ['decide', '--gate', 'direction', '--choice', directionId, '--json']);
   assert.equal(accepted.code, 0, accepted.stderr);
+  assert.equal(json(accepted).stage, 'sample');
+  assert.equal(json(accepted).stageRevision, 3);
+  const directionDecision = json(accepted).decisionId as string;
+  assert.ok(directionDecision.length > 0);
   assert.equal(json(await cli(dir, ['status', '--json'])).stage, 'sample');
 
   const replay = await cli(dir, [
-    'decide', '--gate', 'direction', '--choice', directionId, '--revision', '2', '--decision-id', 'd-direction', '--json',
+    'decide', '--gate', 'direction', '--choice', directionId,
+    '--revision', '2', '--decision-id', directionDecision, '--json',
   ]);
   assert.equal(replay.code, 0);
   assert.equal(json(replay).idempotent, true);
   assert.equal(json(replay).stageRevision, 3);
 
-  const noSample = await cli(dir, [
-    'decide', '--gate', 'sample', '--choice', 'accept', '--revision', '3', '--decision-id', 'd-sample',
-  ]);
+  const noSample = await cli(dir, ['decide', '--gate', 'sample', '--choice', 'accept']);
   assert.equal(noSample.code, 3);
   assert.match(noSample.stderr, /预览\/v0\.html/);
 
   const fixture = await readFile(join(here, 'fixtures', 'pages', 'good.html'), 'utf8');
   await writeFile(join(dir, '预览', 'v0.html'), fixture, 'utf8');
-  const sample = await cli(dir, [
-    'decide', '--gate', 'sample', '--choice', 'accept', '--revision', '3', '--decision-id', 'd-sample',
-  ]);
+  const sample = await cli(dir, ['decide', '--gate', 'sample', '--choice', 'accept']);
   assert.equal(sample.code, 0, sample.stderr);
 
   const earlyDelivery = await cli(dir, ['deliver']);
@@ -178,14 +187,14 @@ test('full page lifecycle reaches delivery with browser evidence', {
     assert.ok((await stat(join(dir, screenshot))).size > 100);
   }
 
-  const acceptedPage = await cli(dir, [
-    'decide', '--gate', 'acceptance', '--choice', 'accept', '--revision', '5', '--decision-id', 'd-accept',
-  ]);
+  const acceptedPage = await cli(dir, ['decide', '--gate', 'acceptance', '--choice', 'accept', '--json']);
   assert.equal(acceptedPage.code, 0, acceptedPage.stderr);
+  const acceptedSummary = json(acceptedPage);
+  assert.equal(acceptedSummary.stage, 'delivered');
+  assert.equal(acceptedSummary.stageRevision, 6);
+  assert.equal((acceptedSummary.delivery as Record<string, unknown>).ok, true);
+  assert.equal((acceptedSummary.delivery as Record<string, unknown>).fileCount, 6);
 
-  const delivered = await cli(dir, ['deliver', '--json']);
-  assert.equal(delivered.code, 0, delivered.stderr);
-  assert.equal(json(delivered).path, '交付');
   const readme = await readFile(join(dir, '交付', '说明.md'), 'utf8');
   assert.match(readme, /direct|index\.html|双击/);
   assert.ok((await readFile(join(dir, '交付', 'index.html'))).byteLength > 100);
@@ -194,6 +203,42 @@ test('full page lifecycle reaches delivery with browser evidence', {
   const finalStatus = json(await cli(dir, ['status', '--json']));
   assert.equal(finalStatus.stage, 'delivered');
   assert.equal((finalStatus.artifacts as Record<string, string>).delivery, '交付');
+});
+
+test('auto-delivery reports a self-contained failure but keeps the acceptance decision', {
+  skip: findChrome().available ? false : 'Chrome not installed',
+}, async () => {
+  const dir = await newDir();
+  const started = await cli(dir, [
+    'start', '--name', '坏素材', '--brief',
+    '做一个产品介绍单页，说明一个本地工具的功能和使用方式，需要首屏、功能说明和下载按钮。页面需要真实文案和明确的本地占位图。', '--json',
+  ]);
+  const directionId = (json(started).directions as Array<{ id: string }>)[0]!.id;
+  await cli(dir, ['decide', '--gate', 'direction', '--choice', directionId]);
+
+  const page = [
+    '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">',
+    '<style>img{max-width:100%}</style></head><body><h1>本地工具</h1><button>下载</button>',
+    '<img src="/Users/me/missing.png" alt="绝对路径图片"></body></html>',
+  ].join('');
+  await writeFile(join(dir, '预览', 'v0.html'), page, 'utf8');
+  await cli(dir, ['decide', '--gate', 'sample', '--choice', 'accept']);
+  await cp(join(dir, '预览', 'v0.html'), join(dir, '预览', 'index.html'));
+
+  const inspected = await cli(dir, ['inspect', '--json']);
+  assert.equal(inspected.code, 1);
+  assert.equal(json(inspected).passed, false);
+
+  const accepted = await cli(dir, ['decide', '--gate', 'acceptance', '--choice', 'accept', '--acknowledge-issues', '--json']);
+  assert.equal(accepted.code, 1);
+  const summary = json(accepted);
+  assert.equal(summary.stage, 'delivered');
+  assert.equal((summary.delivery as Record<string, unknown>).ok, false);
+  await assert.rejects(() => stat(join(dir, '交付')), /ENOENT/);
+
+  const status = json(await cli(dir, ['status', '--json']));
+  assert.equal(status.stage, 'delivered');
+  assert.equal((status.artifacts as Record<string, string>).delivery, undefined);
 });
 
 test('corrupt state is reported without being reset', async () => {

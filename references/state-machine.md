@@ -47,8 +47,18 @@ Accepted transitions append a decision:
 }
 ```
 
+`--revision` defaults to the current `stageRevision`, and `--decision-id` is
+generated when omitted, so the normal flow is just
+`decide --gate … --choice …`. Explicit values are still validated. Keep them in
+scripts that need idempotent retries: an auto-generated ID is new on every
+call, so a retried command creates a second decision.
+
 `acknowledgedIssues: true` is recorded when the user explicitly accepts a
 failed or skipped browser acceptance.
+
+Accepting the acceptance gate also runs `deliver`. If the self-contained check
+fails, the decision is kept, the command exits `1`, and `交付/` is not written;
+fix the files and run `superweb deliver` again.
 
 ## Idempotency and conflicts
 

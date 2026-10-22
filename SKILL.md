@@ -5,193 +5,153 @@ description: Create a website or web app through three explicit decision gates (
 
 # SuperWeb
 
-SuperWeb turns "make me a web page" into a gated workflow. You own the page
-content and code. The `superweb` CLI owns task state, decisions, browser
-acceptance, and delivery.
+Three confirmations, nothing more: **direction → sample → acceptance**.
+You write the page; the `superweb` CLI owns state, decisions, Chrome checks,
+and delivery. Talk to the user in Chinese; page copy follows its audience.
 
-Talk to the user in Simplified Chinese. Write the page copy in the language of
-its intended audience.
+The user should only ever be asked three times:
 
-## Non-negotiables
+1. Which of the three directions?
+2. Is the sample right?
+3. Does the full page pass acceptance?
 
-- Do not start coding before the direction gate is confirmed.
-- Do not build the full page before the sample gate is confirmed.
-- Do not accept or deliver without an explicit user decision. Acceptance is
-  the user's decision, never yours.
-- Never edit `superweb.json` by hand. Every state change goes through the CLI.
-- Default output is static HTML/CSS/JS that opens by double-click. Do not add
-  React, Vite, a build step, or a package manager unless the user explicitly
-  asks.
-- Use local assets or visibly marked placeholders. Never invent statistics,
-  customers, logos, testimonials, or screenshots. Never draw a fake product
-  image in CSS/SVG.
-- Do not fetch images from stock libraries or read the user's browser session.
-- Use every asset the user provides before any placeholder.
+Do not ask for permission between commands, for token approval, or to confirm
+each file. Run the CLI yourself and move to the next gate.
 
-## Workflow
+## Rules
 
-### 0. Create the task
+- No page code before the direction is confirmed. No full page before the
+  sample is confirmed. No delivery before the user accepts.
+- Never edit `superweb.json` by hand. Never silently resolve a stale revision;
+  re-read state and ask the user again.
+- Static HTML/CSS/JS by default. No React, Vite, or build step unless the user
+  explicitly asks.
+- Local assets or visibly marked placeholders. Never invent data, logos,
+  testimonials, product screenshots, or CSS-drawn fake products. Never fetch
+  stock images.
+- Every section must answer "what does it prove". Delete filler.
+- The sample uses the final fonts, colors, spacing, and real copy.
 
-If the user has not given enough detail, ask for: what it is, who it is for,
-the content that must appear, and which assets exist. Then:
+## Flow
 
-```bash
-superweb start --dir <task-dir> --name "<short name>" --brief "<the brief>"
-```
+### Start
 
-If the brief is long, put it in a file and use `--brief-file`. Route is
-detected from the brief (`page` or `app`); override with `--route page|app`
-only when the detection is wrong. `需求.md` is the task brief; you may append
-clarified details the user actually gave, never invented ones.
-
-Run `superweb continue --dir <task-dir> --json` whenever you resume. The state
-file is the source of truth, not the conversation.
-
-### 1. Direction gate
-
-Read `需求.md` and run:
+Ask once for the brief only if it is genuinely missing: what it is, who it is
+for, required content, existing assets.
 
 ```bash
-superweb directions --dir <task-dir> [--seed <seed>]
+superweb start --dir <task-dir> --name "<name>" --brief "<brief>"
 ```
 
-This writes three route-compatible directions plus a content structure to
-`设计方向.md`. Present all three to the user with their concept, composition,
-type, palette, motion, and suitable scenarios. Present the section structure
-and what each section must prove. Ask the user to choose one direction and
-confirm the structure. Do not choose for them and do not blend directions.
+If the brief is substantial, `start` writes `需求.md` **and extracts the three
+directions automatically**. If the brief is too thin, it stays at `brief`:
+fill `需求.md` with what the user actually said, then run
+`superweb directions --dir <task-dir>`.
+
+Resume with `superweb continue --dir <task-dir> --json`.
+
+### Gate 1 — direction
+
+Show all three directions from `设计方向.md` (concept, composition, type,
+palette, motion, suitable for) and the section structure with what each section
+proves. Do not choose for the user and do not blend directions.
 
 After an explicit choice:
 
 ```bash
-superweb decide --dir <task-dir> --gate direction --choice <direction-id> \
-  --revision <current revision> --decision-id <new-id>
+superweb decide --dir <task-dir> --gate direction --choice <direction-id>
 ```
 
-The revision must come from `continue`/`status`. If it is stale, re-read the
-state and ask the user again; never silently retry with a new revision.
+Revision and decision ID default to the current state; no extra flags needed.
+If the user wants changes to the direction after this, that is a rework, not a
+silent edit.
 
-Follow the chosen recipe in `references/direction-library.md`. It is a recipe,
-not a template: derive the actual layout from the content.
+### Gate 2 — sample
 
-### 2. Sample gate
+Write `预览/v0.html`:
 
-Before writing code, write the design tokens into the sample: colors,
-typefaces, spacing scale, radii, shadows, and motion. Use the confirmed
-direction, exact copy, and real assets.
+- `page`: first viewport + one representative section.
+- `app`: application shell + one representative screen.
 
-- `page` route: build only the first viewport plus one representative section
-  in `预览/v0.html`. It must use the final type, color, and spacing, not a
-  throwaway mock.
-- `app` route: build the application shell plus one representative screen in
-  `预览/v0.html`.
-
-Open the sample in a browser and show the user a screenshot or the file. Only
-after explicit approval:
+Use the final tokens and real copy. Show the user the file or a screenshot.
+Only on explicit approval:
 
 ```bash
-superweb decide --dir <task-dir> --gate sample --choice accept \
-  --revision <current revision> --decision-id <new-id>
+superweb decide --dir <task-dir> --gate sample --choice accept
 ```
 
-If the user wants changes, keep working in `v0.html`; the stage stays `sample`
-and no decision is recorded.
+Changes stay in `v0.html`; stay at this gate until the user approves.
 
-### 3. Full page
+### Gate 3 — acceptance
 
-Extend the confirmed sample into `预览/index.html`. Keep the tokens. Every
-section must answer "what does it prove"; delete filler. Complete all menus,
-prices, people, states, and content — no "Lorem ipsum" and no half-finished
-sections. Follow `references/page-blueprint.md` or
-`references/app-blueprint.md` for the route.
-
-Responsive behavior is part of the page, not a later step. Check at 1440,
-768, and 390 CSS pixels. Include hover, focus, active, disabled, loading,
-empty, and error states where they apply.
-
-When the page is ready, run:
+Complete `预览/index.html` with all content, responsive behavior, and applicable
+hover/focus/active/disabled/loading/empty/error states. Then:
 
 ```bash
 superweb inspect --dir <task-dir>
 ```
 
-This starts a temporary local server, launches local Chrome, checks three
-viewports, writes screenshots and `验收/report.json`, and moves the task to
-`acceptance`. Present the screenshots and the issue list to the user. Do not
-hide failures.
-
-If Chrome is missing, explain the exact reason, offer to fix `CHROME_PATH` or
-`--chrome`, and only continue if the user explicitly accepts delivery without
-browser acceptance. That decision requires `--acknowledge-issues`.
-
-To rework, use the acceptance decision with `rework` (see
-`references/state-machine.md`) and only rebuild the affected sections.
-
-### 4. Acceptance and delivery
-
-Only after the user accepts the result:
+Present the three screenshots and every issue. Show failures; never hide them.
+On explicit approval:
 
 ```bash
-superweb decide --dir <task-dir> --gate acceptance --choice accept \
-  --revision <current revision> --decision-id <new-id>
-
-superweb deliver --dir <task-dir>
+superweb decide --dir <task-dir> --gate acceptance --choice accept
 ```
 
-`交付/` contains `index.html`, assets, acceptance evidence, and `说明.md`.
-Verify it opens directly and that the readme is honest about any remaining
-issues.
+Acceptance **auto-generates `交付/`**. If self-contained checks fail, the
+decision is kept and the command exits 1 with the offending files; fix them and
+run `superweb deliver --dir <task-dir>`.
 
-## Route rules
+If Chrome is missing, explain the reason and let the user decide. Continuing
+requires `--acknowledge-issues`; the delivery readme will say
+“未完成浏览器验收”.
 
-### page
+### Rework
 
-Use for landing pages, product pages, portfolios, event pages, one-pagers.
-Start from the concrete object: a book, a photographer, a festival, a tool.
-The first viewport must state what it is, who it is for, and the next action.
-For events, time, place, and action belong above the fold. Read
-`references/page-blueprint.md`.
+```bash
+superweb decide --dir <task-dir> --gate acceptance --choice rework --target full
+# or --target sample, or omit --target for full
+```
 
-### app
+Keep the direction and tokens; rebuild only the affected sections. After
+delivery, the same command opens a new revision; the old `交付/` is archived as
+`交付-vN` on the next delivery.
 
-Use for admin panels, dashboards, settings, lists, editors, and work
-interfaces. Use quiet panels, aligned data, clear table hierarchy, and honest
-empty states. Do not turn a workspace into a marketing page. Read
-`references/app-blueprint.md`.
+## Routes
 
-## Anti-patterns (reject on sight)
+- `page`: landing, product, portfolio, event, one-pager. Detail above the fold:
+  what it is, who it is for, the action. See `references/page-blueprint.md`.
+- `app`: admin, dashboard, settings, list, editor. Quiet panels, aligned
+  numbers, clear tables, honest empty states. See
+  `references/app-blueprint.md`.
+- Route is detected from the brief; override with `--route page|app` only when
+  wrong. Both routes share the direction library and acceptance.
 
-- Purple-pink gradients, glassmorphism, generic SaaS hero + three feature
-  cards, emoji as icons.
-- Fake logo walls, invented metrics, invented testimonials, lorem ipsum.
-- CSS-drawn "product screenshots", stock-photo filler, decorative charts with
-  no data.
-- Centered everything, cards inside cards, excessive radii and shadows.
-- A sample that uses different fonts/colors from the full page.
-- A beautiful hero followed by a template section.
+## Anti-patterns
+
+Purple-pink gradients, glassmorphism, generic SaaS hero + three feature cards,
+emoji icons, fake logo walls, invented metrics, lorem ipsum, CSS-drawn product
+shots, cards inside cards, a designed hero followed by template sections.
 
 ## Commands
 
 | Command | Purpose |
 | --- | --- |
-| `superweb start` | Create task state, `需求.md`, preview and acceptance dirs |
-| `superweb directions` | Extract 3 seeded directions + content structure |
-| `superweb decide` | Record a gated decision; validates stage and revision |
-| `superweb inspect` | Local Chrome acceptance; writes screenshots + report |
-| `superweb deliver` | Build self-contained `交付/`, archive older delivery |
+| `superweb start` | Create task; auto-extract directions when the brief is ready |
+| `superweb decide` | Record a gate decision; revision/ID optional |
+| `superweb inspect` | Chrome acceptance at 1440/768/390 |
+| `superweb deliver` | Retry delivery (accept auto-delivers) |
 | `superweb continue` | Read stage, decisions, artifacts, next action |
 | `superweb status` | Read-only compact state |
+| `superweb directions` | Re-extract directions when needed |
 
-Add `--json` for machine-readable output. Exit codes: `0` success, `1`
-acceptance/delivery check failed, `2` usage, `3` state or decision rejected,
-`4` local Chrome unavailable.
+`--json` for machine output. Exit codes: `0` success, `1` acceptance/delivery
+failure, `2` usage, `3` state/decision rejected, `4` Chrome unavailable.
 
 ## References
 
-- `references/state-machine.md` — stages, revisions, decisions, rework,
-  delivery semantics.
-- `references/page-blueprint.md` — page sections and what each must prove.
-- `references/app-blueprint.md` — app shell, primary screen, states.
-- `references/direction-library.md` — the 12 direction recipes.
-- `references/acceptance.md` — browser checks and report interpretation.
-- `references/delivery.md` — self-contained delivery rules.
+- `references/state-machine.md` — stages, revisions, rework, delivery
+- `references/page-blueprint.md` / `references/app-blueprint.md` — structures
+- `references/direction-library.md` — 12 recipes
+- `references/acceptance.md` — checks and report
+- `references/delivery.md` — self-contained rules

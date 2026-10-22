@@ -1,4 +1,6 @@
-# SuperWeb v1 validation record
+# SuperWeb validation record
+
+Version: 1.1.0 (v1 plus the reduced-step UX)
 
 Date: 2026-10-22
 
@@ -41,17 +43,16 @@ npm test
 Result:
 
 ```
-tests 40
+tests 41
 suites 0
-pass 40
+pass 41
 fail 0
 cancelled 0
 skipped 0
 todo 0
-duration_ms 3452
 ```
 
-All 40 tests passed with Chrome available; no browser test was skipped.
+All 41 tests passed with Chrome available; no browser test was skipped.
 
 ### CLI help smoke
 
@@ -65,18 +66,35 @@ Result: exit 0. Help text prints the command list.
 ./bin/superweb.mjs --version
 ```
 
-Result: `superweb 1.0.0`, exit 0.
+Result: `superweb 1.1.0`, exit 0.
+
+### Reduced-step UX behavior
+
+Version 1.1.0 removes flags and steps without removing a gate:
+
+- `start` with a substantial brief extracts the three directions immediately
+  (stage `direction`, revision 2). A thin brief stays at `brief`.
+- `decide` defaults `--revision` to the current revision and generates
+  `--decision-id` when omitted. Explicit values still validate; stale revisions
+  are still rejected.
+- Accepting the acceptance gate runs delivery automatically. If self-contained
+  checks fail, the acceptance decision is kept, the command exits 1, and no
+  `交付/` is written.
+- The normal flow is exactly three user confirmations and five CLI calls:
+  `start`, `decide direction`, `decide sample`, `inspect`, `decide accept`.
+- Browser tests cover auto-extraction, defaulted decide flags, three-decision
+  lifecycle, and the auto-delivery failure path.
 
 ### Packaging and install
 
 ```
 npm pack
-npm install -g --prefix <temp-prefix> superweb-1.0.0.tgz
+npm install -g --prefix <temp-prefix> superweb-1.1.0.tgz
 <temp-prefix>/bin/superweb --version   # run from /tmp
 ```
 
-Result: tarball built with 17 files (42.6 kB packed, 125.0 kB unpacked),
-installed globally into a temporary prefix, and printed `superweb 1.0.0` when
+Result: tarball built with 17 files (42.9 kB packed, 126.6 kB unpacked),
+installed globally into a temporary prefix, and printed `superweb 1.1.0` when
 run outside the repository. This verifies that the executable, the `tsx`
 runtime dependency, `SKILL.md`, and the reference docs are all packaged.
 
@@ -86,20 +104,20 @@ Executed with the packaged executable (`bin/superweb.mjs`) in a fresh temporary
 task directory:
 
 ```
-start      -> page route, brief written, superweb.json at revision 1
-directions -> 3 directions (seed smoke-2026), revision 2
-decide     -> direction warm-humanist, revision 3, stage sample
-           -> v0.html written, sample accept, revision 4, stage full
+start      -> page route, 3 directions auto-extracted, revision 2, stage direction
+decide     -> direction warm-humanist (no flags), revision 3, stage sample
+           -> v0.html written, sample accept (no flags), revision 4, stage full
            -> index.html written
 inspect    -> passed=true, issues=0, screenshots=3, stage acceptance, revision 5
-decide     -> acceptance accept, revision 6, stage delivered
-deliver    -> 交付/ with index.html, 说明.md, 验收/ (report + 3 screenshots)
+decide     -> acceptance accept (no flags), revision 6, stage delivered
+           -> 交付/ auto-built with index.html, 说明.md, 验收/
 ```
 
 Smoke output:
 
 ```
-direction=warm-humanist inspect.passed=true issues=0 screenshots=3 delivered.files=6 deliveryPath=交付
+START stage=direction rev=2 directions=3
+DECISIONS revs=3,4,5,6 inspect=true delivery=true files=6
 ```
 
 The delivery contained no `v0.html` and no preview-only files.
@@ -113,7 +131,7 @@ The delivery contained no `v0.html` and no preview-only files.
 | Directions | `test/directions.test.ts` | 12 complete unique recipes; route coverage; seeded reproducibility; route filtering; seed variation; thin brief refusal; app/page detection; rendered doc + offered-ID parsing |
 | Browser acceptance | `test/inspect.test.ts` | Chrome discovery; missing Chrome explainable failure (exit 4 + report); overflow/broken image/console errors found at mobile and others; 3 screenshots; clean page passes at 1440/768/390 |
 | Delivery | `test/delivery.test.ts` | relative/data assets allowed; absolute/remote/missing refs refused; remote CSS import and absolute JS path refused; missing acceptance refused; copy page/assets/report/readme; v0 excluded; previous delivery archived as `交付-v1`; no-browser note in readme |
-| CLI black box | `test/cli.test.ts` | `start` files/route detection/override/no overwrite; read-only `status`; thin brief refusal; seeded directions; stale/unknown/skipped decisions; idempotent replay; sample artifact gate; early delivery refusal; full lifecycle through inspect/accept/deliver; corrupt state; usage errors/help/version |
+| CLI black box | `test/cli.test.ts` | `start` files/route detection/override/no overwrite; auto direction extraction; read-only `status`; thin brief refusal; seeded directions; stale/unknown/skipped decisions; defaulted revision/decision ID; idempotent replay; sample artifact gate; early delivery refusal; three-confirmation lifecycle with auto-delivery; auto-delivery refusal; corrupt state; usage errors/help/version |
 
 Fixtures: `test/fixtures/pages/good.html` (responsive, no external assets) and
 `bad.html` (overflow, clipped text, broken image, deliberate console error).
