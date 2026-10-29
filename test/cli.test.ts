@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cp, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
+import { cp, mkdtemp, readFile, stat, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -50,6 +50,8 @@ test('start creates a task, detects the app route and immediately extracts direc
   assert.match(await readFile(join(dir, '需求.md'), 'utf8'), /团队管理后台/);
   assert.match(await readFile(join(dir, 'superweb.json'), 'utf8'), /"route": "app"/);
   assert.match(await readFile(join(dir, '设计方向.md'), 'utf8'), /## 内容结构/);
+  assert.match(await readFile(join(dir, '设计引导.md'), 'utf8'), /## 引导式构建输入/);
+  assert.match(await readFile(join(dir, 'superweb.json'), 'utf8'), /"guide": "设计引导\.md"/);
 
   const again = await cli(dir, ['start', '--name', '覆盖', '--brief', APP_BRIEF]);
   assert.equal(again.code, 3);
@@ -138,6 +140,60 @@ test('directions refuses a thin brief, then extracts the same three ids for the 
   assert.match(await readFile(join(dir, '设计方向.md'), 'utf8'), /## 内容结构/);
 });
 
+test('legacy direction tasks explain how to restore a missing guided contract', async () => {
+  const dir = await newDir();
+  await cli(dir, ['start', '--name', '演示']);
+  await writeFile(
+    join(dir, '需求.md'),
+    '# 需求\n\n做一个面向独立开发者的产品落地页，需要首屏、功能说明、价格、常见问题和明确的下载行动。\n',
+    'utf8',
+  );
+  await cli(dir, ['directions']);
+  const state = JSON.parse(await readFile(join(dir, 'superweb.json'), 'utf8')) as Record<string, unknown>;
+  const artifacts = { ...(state.artifacts as Record<string, unknown>) };
+  delete artifacts.guide;
+  await writeFile(join(dir, 'superweb.json'), `${JSON.stringify({ ...state, artifacts }, null, 2)}\n`, 'utf8');
+  await unlink(join(dir, '设计引导.md'));
+
+  const status = await cli(dir, ['status', '--json']);
+  assert.equal(status.code, 0);
+  const next = (json(status).next as Array<{ note?: string }>)[0]?.note ?? '';
+  assert.match(next, /directions/);
+  assert.match(next, /缺失|重建/);
+
+  const directionDoc = await readFile(join(dir, '设计方向.md'), 'utf8');
+  const directionId = /^##\s+\d+\.\s+([a-z0-9-]+)\s+—/m.exec(directionDoc)?.[1];
+  assert.ok(directionId);
+  const decided = await cli(dir, ['decide', '--gate', 'direction', '--choice', directionId!, '--decision-id', 'd-legacy']);
+  assert.equal(decided.code, 0);
+  await unlink(join(dir, '设计引导.md'));
+  const replay = await cli(dir, [
+    'decide', '--gate', 'direction', '--choice', directionId!, '--revision', '2', '--decision-id', 'd-legacy', '--json',
+  ]);
+  assert.equal(replay.code, 0);
+  assert.equal(json(replay).idempotent, true);
+  assert.match(await readFile(join(dir, '设计引导.md'), 'utf8'), new RegExp(directionId!));
+});
+
+test('decide rejects flags that do not apply to the selected gate', async () => {
+  const dir = await newDir();
+  const started = await cli(dir, ['start', '--name', '演示', '--brief', APP_BRIEF, '--json']);
+  const directionId = (json(started).directions as Array<{ id: string }>)[0]!.id;
+  const wrongTarget = await cli(dir, [
+    'decide', '--gate', 'direction', '--choice', directionId, '--target', 'sample',
+  ]);
+  assert.equal(wrongTarget.code, 2);
+  assert.match(wrongTarget.stderr, /--target/);
+
+  const accepted = await cli(dir, ['decide', '--gate', 'direction', '--choice', directionId]);
+  assert.equal(accepted.code, 0);
+  const wrongAcknowledgement = await cli(dir, [
+    'decide', '--gate', 'sample', '--choice', 'accept', '--acknowledge-issues',
+  ]);
+  assert.equal(wrongAcknowledgement.code, 2);
+  assert.match(wrongAcknowledgement.stderr, /--acknowledge-issues/);
+});
+
 test('decide rejects stale revisions, unknown directions and skipped stages', async () => {
   const dir = await newDir();
   const started = await cli(dir, [
@@ -183,6 +239,7 @@ test('full page lifecycle requires only three confirmations and auto-delivers', 
   assert.equal(json(accepted).stageRevision, 3);
   const directionDecision = json(accepted).decisionId as string;
   assert.ok(directionDecision.length > 0);
+  assert.match(await readFile(join(dir, '设计引导.md'), 'utf8'), new RegExp(directionId));
   assert.equal(json(await cli(dir, ['status', '--json'])).stage, 'sample');
 
   const replay = await cli(dir, [
@@ -215,6 +272,16 @@ test('full page lifecycle requires only three confirmations and auto-delivers', 
   for (const screenshot of report.screenshots as string[]) {
     assert.ok((await stat(join(dir, screenshot))).size > 100);
   }
+
+  const previewPath = join(dir, '预览', 'index.html');
+  const previewBeforeAcceptance = await readFile(previewPath, 'utf8');
+  await writeFile(previewPath, `${previewBeforeAcceptance}\n<!-- changed after inspect -->`, 'utf8');
+  const staleAcceptance = await cli(dir, [
+    'decide', '--gate', 'acceptance', '--choice', 'accept', '--decision-id', 'd-stale-acceptance',
+  ]);
+  assert.equal(staleAcceptance.code, 3);
+  assert.match(staleAcceptance.stderr, /验收报告已过期|重新 inspect/);
+  await writeFile(previewPath, previewBeforeAcceptance, 'utf8');
 
   const acceptedPage = await cli(dir, ['decide', '--gate', 'acceptance', '--choice', 'accept', '--json']);
   assert.equal(acceptedPage.code, 0, acceptedPage.stderr);

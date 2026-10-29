@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cp, mkdir, mkdtemp, readFile, stat } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { findChrome, inspectTask } from '../src/inspect.js';
+import { findChrome, hashPreviewDir, inspectTask } from '../src/inspect.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fixture = (name: string) => join(here, 'fixtures', 'pages', name);
@@ -78,4 +78,14 @@ test('a clean responsive page passes all three viewports', { skip: chrome.availa
       ['mobile', 390],
     ],
   );
+});
+
+test('preview fingerprint changes when preview content changes', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'superweb-fingerprint-'));
+  await mkdir(join(dir, '预览'), { recursive: true });
+  await writeFile(join(dir, '预览', 'index.html'), '<html><body>one</body></html>', 'utf8');
+  const first = await hashPreviewDir(join(dir, '预览'));
+  await writeFile(join(dir, '预览', 'index.html'), '<html><body>two</body></html>', 'utf8');
+  const second = await hashPreviewDir(join(dir, '预览'));
+  assert.notEqual(first, second);
 });

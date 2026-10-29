@@ -130,6 +130,61 @@ test('reusing a decision id with a different payload is rejected', () => {
   );
 });
 
+test('reusing a decision id with a different acknowledgement or target is rejected', () => {
+  const acceptance = markInspected(toFull(fresh()), {
+    passed: false,
+    reportPath: '验收/report.json',
+    screenshots: [],
+    browserAvailable: true,
+    issueCount: 1,
+  });
+  const first = applyDecision(acceptance, {
+    gate: 'acceptance',
+    choice: 'accept',
+    revision: acceptance.stageRevision,
+    decisionId: 'd-payload',
+    acknowledgeIssues: true,
+  });
+  assert.throws(
+    () => applyDecision(first.state, {
+      gate: 'acceptance',
+      choice: 'accept',
+      revision: acceptance.stageRevision,
+      decisionId: 'd-payload',
+    }),
+    (error: unknown) => error instanceof StateError && /已用于/.test(error.message),
+  );
+
+  const rework = applyDecision(
+    markInspected(toFull(fresh()), {
+      passed: false,
+      reportPath: '验收/report.json',
+      screenshots: [],
+      browserAvailable: true,
+      issueCount: 1,
+    }),
+    {
+      gate: 'acceptance',
+      choice: 'rework',
+      revision: 5,
+      decisionId: 'd-rework-payload',
+      target: 'sample',
+    },
+  );
+  assert.equal(rework.state.stage, 'sample');
+  assert.throws(
+    () => applyDecision(rework.state, {
+      gate: 'acceptance',
+      choice: 'rework',
+      revision: 5,
+      decisionId: 'd-rework-payload',
+      target: 'full',
+    }),
+    (error: unknown) => error instanceof StateError && /已用于/.test(error.message),
+  );
+  assert.equal(first.state.stage, 'delivered');
+});
+
 test('acceptance cannot be accepted while checks failed without acknowledgement', () => {
   const state = markInspected(toFull(fresh()), {
     passed: false,
@@ -230,4 +285,14 @@ test('state round-trips through disk', async () => {
   await writeState(dir, state);
   const loaded = await readState(dir);
   assert.deepEqual(loaded, state);
+});
+
+test('concurrent state writes leave one complete valid state file', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'superweb-state-concurrent-'));
+  const writes = Array.from({ length: 8 }, (_, index) =>
+    writeState(dir, { ...fresh(), taskId: `concurrent-${index}` }),
+  );
+  await Promise.all(writes);
+  const loaded = await readState(dir);
+  assert.match(loaded.taskId, /^concurrent-[0-7]$/);
 });

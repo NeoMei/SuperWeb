@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { checkSelfContained, deliverTask, DeliveryError } from '../src/delivery.js';
@@ -116,6 +116,44 @@ test('self-contained check rejects remote CSS imports and absolute JS asset path
   const issues = await checkSelfContained(dir);
   assert.ok(issues.some((issue) => issue.ref?.startsWith('https://fonts.example.com')));
   assert.ok(issues.some((issue) => issue.ref === '/Users/me/logo.png'));
+});
+
+test('self-contained check rejects relative references that escape the delivery root', async () => {
+  const parent = await mkdtemp(join(tmpdir(), 'superweb-sc-boundary-'));
+  const root = join(parent, 'preview');
+  await mkdir(root, { recursive: true });
+  await writeFile(join(parent, 'outside.png'), 'outside', 'utf8');
+  await writeFile(join(root, 'index.html'), '<img src="../outside.png">', 'utf8');
+  const issues = await checkSelfContained(root);
+  assert.equal(issues.length, 1);
+  assert.match(issues[0]!.message, /交付目录|目录外|不存在/);
+});
+
+test('self-contained check rejects symlinked delivery assets', async () => {
+  const parent = await mkdtemp(join(tmpdir(), 'superweb-sc-symlink-'));
+  const root = join(parent, 'preview');
+  await mkdir(root, { recursive: true });
+  await writeFile(join(parent, 'outside.png'), 'outside', 'utf8');
+  await symlink(join(parent, 'outside.png'), join(root, 'outside.png'));
+  const issues = await checkSelfContained(root);
+  assert.equal(issues.length, 1);
+  assert.match(issues[0]!.message, /符号链接/);
+});
+
+test('self-contained check reports malformed URL encoding', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'superweb-sc-uri-'));
+  await writeFile(join(dir, 'index.html'), '<img src="assets/%E0%A4%A.png">', 'utf8');
+  const issues = await checkSelfContained(dir);
+  assert.equal(issues.length, 1);
+  assert.match(issues[0]!.message, /非法 URL 编码/);
+});
+
+test('delivery requires an acceptance report file', async () => {
+  const state = deliveredState();
+  const dir = await mkdtemp(join(tmpdir(), 'superweb-deliver-report-'));
+  await mkdir(join(dir, '预览'), { recursive: true });
+  await writeFile(join(dir, '预览', 'index.html'), '<html><body>ok</body></html>', 'utf8');
+  await assert.rejects(() => deliverTask({ taskDir: dir, state }), /找不到验收报告/);
 });
 
 test('a new delivery archives the previous one instead of overwriting it', async () => {

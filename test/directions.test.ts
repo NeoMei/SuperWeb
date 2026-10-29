@@ -11,6 +11,7 @@ import {
   renderDirectionsDoc,
 } from '../src/directions.js';
 import { DIRECTIONS } from '../src/directions.js';
+import { renderGuidedBuildContract, renderGuidedBuildDocument } from '../src/guided.js';
 
 test('the library has 12 complete, route-compatible directions', () => {
   assert.equal(DIRECTIONS.length, 12);
@@ -86,4 +87,61 @@ test('rendered direction doc lists exactly the extracted ids and content structu
   for (const section of PAGE_BLUEPRINT) {
     assert.ok(section.proves.length > 0);
   }
+});
+
+test('rendered direction doc keeps the guided contract in its dedicated artifact', () => {
+  const doc = renderDirectionsDoc({
+    taskId: 'guided-page',
+    route: 'page',
+    seed: 'guided-seed',
+    revision: 2,
+    directions: pickDirections('page', 'guided-seed'),
+    blueprint: PAGE_BLUEPRINT,
+  });
+
+  assert.doesNotMatch(doc, /## 引导式构建输入/);
+  assert.match(doc, /## 内容结构/);
+});
+
+test('guided contract contains the primary page build rules', () => {
+  const doc = renderGuidedBuildContract({
+    route: 'page',
+    blueprint: PAGE_BLUEPRINT,
+  });
+
+  for (const heading of [
+    '## 引导式构建输入',
+    '## 页面输出顺序',
+    '## 分段构建顺序',
+    '## 视觉系统契约',
+    '## 交互与交付检查',
+  ]) {
+    assert.match(doc, new RegExp(heading));
+  }
+  assert.match(doc, /页面大纲/);
+  assert.match(doc, /Hero 文案/);
+  assert.match(doc, /SEO \/ AEO/);
+  assert.match(doc, /tagline reveal/);
+  assert.match(doc, /prefers-reduced-motion/);
+  assert.match(doc, /tagline reveal/);
+});
+
+test('app directions keep the guided contract while using the app build order', () => {
+  const doc = renderGuidedBuildContract({
+    route: 'app',
+    blueprint: APP_BLUEPRINT,
+  });
+
+  assert.match(doc, /应用结构与任务路径/);
+  assert.match(doc, /应用外壳/);
+  assert.match(doc, /状态覆盖/);
+  assert.match(doc, /hover、active、focus、loading、empty、error/);
+  assert.doesNotMatch(doc, /页面输出顺序.*Hero 文案/s);
+});
+
+test('guided build document wraps the contract with one source note', () => {
+  const doc = renderGuidedBuildDocument({ route: 'page', blueprint: PAGE_BLUEPRINT });
+  assert.match(doc, /^# 设计引导/);
+  assert.match(doc, /来源：SuperWeb 内置的统一引导规则/);
+  assert.equal((doc.match(/来源：/g) ?? []).length, 1);
 });
